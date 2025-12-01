@@ -3,6 +3,7 @@
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { ArrowLeft, Download, Share2, Save } from "lucide-react"
+import { useRef } from "react"
 
 interface BillItem {
   id: string
@@ -22,6 +23,8 @@ interface BillPreviewProps {
 }
 
 export function BillPreview({ invoiceNumber, customerName, items, total, onBack, onSave }: BillPreviewProps) {
+  const billRef = useRef<HTMLDivElement>(null)
+
   const currentDate = new Date()
   const formattedDate = currentDate.toLocaleDateString("en-US", {
     year: "numeric",
@@ -37,29 +40,88 @@ export function BillPreview({ invoiceNumber, customerName, items, total, onBack,
     window.print()
   }
 
-  const handleWhatsAppShare = () => {
-    const message = `*Invoice #${invoiceNumber}*\n\nDate: ${formattedDate}\nCustomer: ${customerName}\n\nItems:\n${items
-      .map(
-        (item) =>
-          `- ${item.description}${item.unit ? ` (Unit: ${item.unit})` : ""}${item.kg ? ` (${item.kg})` : ""}: ${item.price.toFixed(2)} SR`,
-      )
-      .join(
-        "\n",
-      )}\n\n*Total: ${total.toFixed(2)} SR*\n\nFrom: SEHR AL WEQAIAH Est.\nfor Safety Tools and Materials\nMobile: 0536070172`
 
-    const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`
-    window.open(whatsappUrl, "_blank")
+
+// Preload all images inside the bill before generating PDF
+const preloadImages = async () => {
+  if (!billRef.current) return
+  const imgs = billRef.current.querySelectorAll("img")
+  const promises = Array.from(imgs).map(img => {
+    if (!img.complete) {
+      return new Promise<void>(resolve => {
+        img.onload = img.onerror = () => resolve()
+      })
+    }
+    return Promise.resolve()
+  })
+  await Promise.all(promises)
+}
+const handleWhatsAppShare = async () => {
+  if (!billRef.current) return
+
+  try {
+    const domtoimage = (await import('dom-to-image')).default
+    const { jsPDF } = await import('jspdf')
+
+    // Preload all images
+    await preloadImages()
+
+    // Capture bill as PNG
+    const dataUrl = await domtoimage.toPng(billRef.current, {
+      bgcolor: '#ffffff',
+      quality: 1,
+      width: billRef.current.scrollWidth,
+      height: billRef.current.scrollHeight,
+    })
+
+    const pdf = new jsPDF('p', 'mm', 'a4')
+    const pdfWidth = 210
+    const pdfHeight = 297 // A4 in mm
+
+    const imgWidth = pdfWidth
+    const imgHeight = (billRef.current.scrollHeight * pdfWidth) / billRef.current.scrollWidth
+
+    let heightLeft = imgHeight
+    let position = 0
+
+    // Add first page
+    pdf.addImage(dataUrl, 'PNG', 0, position, imgWidth, imgHeight)
+    heightLeft -= pdfHeight
+
+    // Add extra pages if needed
+    while (heightLeft > 0) {
+      pdf.addPage()
+      position = heightLeft - imgHeight
+      pdf.addImage(dataUrl, 'PNG', 0, position, imgWidth, imgHeight)
+      heightLeft -= pdfHeight
+    }
+
+    // Save PDF
+    pdf.save(`Invoice-${invoiceNumber}.pdf`)
+  } catch (err) {
+    console.error(err)
+    alert('Failed to generate PDF. Please try printing.')
   }
+}
+
+
+
+
+
+
+
+
+
 
   const handleShare = async () => {
     if (navigator.share) {
       try {
         await navigator.share({
           title: `Invoice ${invoiceNumber}`,
-          text: `Invoice for ${customerName} - Total: ${total.toFixed(2)}`,
+          text: `Invoice for ${customerName}\nTotal: ${total.toFixed(2)} SR`,
         })
       } catch (err) {
-        console.log("Share cancelled or failed")
+        console.log("Share cancelled or not supported")
       }
     }
   }
@@ -69,7 +131,6 @@ export function BillPreview({ invoiceNumber, customerName, items, total, onBack,
   return (
     <main className="min-h-screen p-4 pb-20 bg-background">
       <div className="max-w-2xl mx-auto space-y-6">
-        {/* Action Buttons */}
         <div className="flex gap-3 print:hidden flex-wrap">
           <Button
             onClick={onBack}
@@ -88,24 +149,21 @@ export function BillPreview({ invoiceNumber, customerName, items, total, onBack,
           )}
           <Button onClick={handlePrint} variant="secondary" size="lg" className="h-14 gap-2 flex-1 min-w-[120px]">
             <Download className="h-5 w-5" />
-            Print
+            Print/PDF
           </Button>
- 
+
           <Button
             onClick={handleWhatsAppShare}
             className="h-14 gap-2 flex-1 min-w-[120px] bg-[#25D366] hover:bg-[#20BD5A]"
           >
             <Share2 className="h-5 w-5" />
-            WhatsApp
+            Download PDF
           </Button>
         </div>
 
-        <Card className="p-8 space-y-4 print:shadow-none  text-black border-none">
-          {/* Header Section - Company Info */}
+        <Card ref={billRef} className="p-8 space-y-4 print:shadow-none text-black border-none">
           <div className="space-y-3">
-            {/* Company Name and Logo Row */}
             <div className="flex items-start justify-between gap-4">
-              {/* Left Side - English */}
               <div className="flex-1 text-left space-y-0.5">
                 <h1 className="text-[22px] font-bold text-[#C84B4B] leading-tight">SEHR AL WEQAIAH Est.</h1>
                 <p className="text-[15px] text-[#4A5BAE] font-semibold leading-tight">for Safety Tools and Materials</p>
@@ -113,7 +171,6 @@ export function BillPreview({ invoiceNumber, customerName, items, total, onBack,
                 <p className="text-[17px] font-bold text-[#4A5BAE] mt-1 leading-tight">Mobile: 0536070172</p>
               </div>
 
-              {/* Center - Flame Logo */}
               <div className="flex-shrink-0 -mt-2">
                 <div className="w-24 h-24 flex items-center justify-center">
                   <img
@@ -127,16 +184,14 @@ export function BillPreview({ invoiceNumber, customerName, items, total, onBack,
                 </div>
               </div>
 
-              {/* Right Side - Arabic */}
               <div className="flex-1 text-right space-y-0.5">
                 <h1 className="text-[22px] font-bold text-[#C84B4B] leading-tight">مؤسسة سحر الوقاية</h1>
                 <p className="text-[15px] text-[#4A5BAE] font-semibold leading-tight">لأدوات ومواد السلامة</p>
                 <p className="text-[15px] text-[#4A5BAE] font-semibold leading-tight">تبوك - تيماء</p>
-                <p className="text-[17px] font-bold text-[#4A5BAE] mt-1 leading-tight">جوال: ٠٥٣٦٠٢٠٢٢٢</p>
+                <p className="text-[17px] font-bold text-[#4A5BAE] mt-1 leading-tight">جوال: ٠٥٣٠٠٢٠٢٢٢</p>
               </div>
             </div>
 
-            {/* Invoice Number and Title Row */}
             <div className="flex items-start justify-between pt-1">
               <div className="flex items-baseline gap-2">
                 <span className="text-[15px] text-[#4A5BAE] font-medium">No.:</span>
@@ -156,7 +211,6 @@ export function BillPreview({ invoiceNumber, customerName, items, total, onBack,
               </div>
             </div>
 
-            {/* Customer Name Line */}
             <div className="border-t border-[#4A5BAE]/30 pt-1">
               <div className="flex items-baseline gap-2">
                 <span className="text-[14px] text-[#4A5BAE]">Messrs/Mr.</span>
@@ -168,7 +222,6 @@ export function BillPreview({ invoiceNumber, customerName, items, total, onBack,
           </div>
 
           <div className="border-[2.5px] border-[#4A5BAE] rounded-lg overflow-hidden mt-4">
-            {/* Table Header */}
             <div className="bg-[#E8E5DC] border-b-[2.5px] border-[#4A5BAE]">
               <div className="grid grid-cols-[2fr_0.8fr_0.8fr_1.2fr_1fr] gap-0 text-[#4A5BAE] font-bold text-sm">
                 <div className="p-2.5 text-left border-r-[1.5px] border-[#4A5BAE]">
@@ -204,7 +257,6 @@ export function BillPreview({ invoiceNumber, customerName, items, total, onBack,
               </div>
             </div>
 
-            {/* Table Body with Items */}
             <div
               className="relative"
               style={{
@@ -264,7 +316,6 @@ export function BillPreview({ invoiceNumber, customerName, items, total, onBack,
               ))}
             </div>
 
-            {/* Total Row */}
             <div className="border-t-[2.5px] border-[#4A5BAE] bg-[#E8E5DC]">
               <div className="grid grid-cols-[4.6fr_1fr] gap-0 items-center">
                 <div className="p-2.5 flex items-center gap-4">
@@ -279,16 +330,13 @@ export function BillPreview({ invoiceNumber, customerName, items, total, onBack,
             </div>
           </div>
 
-          {/* Footer Section */}
           <div className="space-y-3 pt-3">
-            {/* Received By Line */}
             <div className="flex items-center gap-3">
               <span className="text-[15px] font-semibold text-[#4A5BAE]">Received by:</span>
               <div className="flex-1 border-b-[2px] border-[#4A5BAE]/40 pb-1 min-h-[30px]"></div>
               <span className="text-[15px] font-semibold text-[#4A5BAE]">:المستلم</span>
             </div>
 
-            {/* Product Icons Strip */}
             <div className="py-2">
               <img
                 src="/images/whatsapp-image-2025-12-01-at-6-36-08-pm-removebg-preview.png"
@@ -297,10 +345,9 @@ export function BillPreview({ invoiceNumber, customerName, items, total, onBack,
               />
             </div>
 
-            {/* Red Footer Bar with Company Details */}
             <div className="bg-[#C84B4B] text-white px-4 py-3 rounded-sm text-center space-y-1.5">
               <p className="text-[11px] leading-relaxed font-medium">
-                ٣٥٥٤٠٠١٢٢٢ المملكة العربية السعودية - تبوك- تيماء - الشارع خالد بن وليد - س. ت:
+                ٣٥٥٤٠٠٢٠٢٢٢ المملكة العربية السعودية - تبوك- تيماء - الشارع خالد بن وليد - س. ت:
               </p>
               <p className="text-[11px] leading-relaxed font-medium">
                 Saudi Arabia - Tabuk - Taima - Khaled Bin Waleed St. - C.R. 3554001573
